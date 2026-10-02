@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+
+  <title>Lecture QR Scanner</title>
+
+  <script src="https://unpkg.com/html5-qrcode"></script>
+
+  <style>
+
+    body {
+      font-family: Arial, sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .card {
+      max-width: 600px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      border-radius: 12px;
+    }
+
+    #reader {
+      width: 100%;
+      max-width: 500px;
+      margin: 20px auto;
+    }
+
+    #result {
+      margin-top: 20px;
+      padding: 15px;
+      font-size: 18px;
+    }
+
+    .success {
+      color: #2e7d32;
+      font-weight: bold;
+    }
+
+    .error {
+      color: #c62828;
+      font-weight: bold;
+    }
+
+    .info {
+      color: #1565c0;
+      font-weight: bold;
+    }
+
+  </style>
+
+</head>
+
+
+<body>
+
+  <div class="card">
+
+    <h2>Lecture Attendance</h2>
+
+    <p>
+      Scan Student QR Code
+    </p>
+
+    <div id="reader"></div>
+
+    <div id="result">
+
+      <p class="info">
+        Starting camera...
+      </p>
+
+    </div>
+
+  </div>
+
+
+  <script>
+
+    let scanner;
+
+
+    function startScanner() {
+
+      scanner = new Html5Qrcode("reader");
+
+
+      const config = {
+
+        fps: 10,
+
+        qrbox: {
+          width: 250,
+          height: 250
+        }
+
+      };
+
+
+      scanner.start(
+
+        {
+          facingMode: "environment"
+        },
+
+        config,
+
+
+        function(decodedText, decodedResult) {
+
+          document.getElementById("result").innerHTML =
+
+            "<p class='success'>" +
+            "✓ QR Code Detected" +
+            "</p>" +
+
+            "<strong>Student Code:</strong><br>" +
+
+            decodedText;
+
+        },
+
+
+        function(errorMessage) {
+
+          // Ignore normal scanning errors.
+
+        }
+
+      )
+
+      .then(function() {
+
+        document.getElementById("result").innerHTML =
+
+          "<p class='success'>" +
+          "✓ Camera Ready" +
+          "</p>" +
+
+          "Point the camera at the student's QR code.";
+
+      })
+
+      .catch(function(error) {
+
+        document.getElementById("result").innerHTML =
+
+          "<p class='error'>" +
+
+          "<strong>Camera Error</strong><br><br>" +
+
+          error +
+
+          "</p>";
+
+      });
+
+    }
+
+
+    window.onload = function() {
+
+      startScanner();
+
+    };
+
+  </script>
+
+</body>
+
+</html>
