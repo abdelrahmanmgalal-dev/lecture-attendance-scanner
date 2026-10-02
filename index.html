@@ -38,7 +38,7 @@
       margin-top: 20px;
       padding: 15px;
       font-size: 18px;
-      min-height: 40px;
+      min-height: 50px;
     }
 
     .success {
@@ -56,9 +56,15 @@
       font-weight: bold;
     }
 
+    .warning {
+      color: #ef6c00;
+      font-weight: bold;
+    }
+
   </style>
 
 </head>
+
 
 <body>
 
@@ -83,103 +89,315 @@
   </div>
 
 
-  <script>
+<script>
 
-    function showResult(message, className) {
+  // ==========================================
+  // GOOGLE APPS SCRIPT WEB APP
+  // ==========================================
 
-      document.getElementById("result").innerHTML =
-        "<p class='" + className + "'>" +
-        message +
-        "</p>";
-
-    }
+  const APPS_SCRIPT_URL =
+    "https://script.google.com/macros/s/AKfycby_WU_q5AD2U5f8pPG4u1LafAkDxoOKANCpEhM0umHSoeoAdeJtVnlqJiEvLLdBTnVuPw/exec";
 
 
-    function onScanSuccess(decodedText, decodedResult) {
+  // ==========================================
+  // GET LECTURE ID FROM URL
+  // ==========================================
 
-      showResult(
-        "✓ QR Code Detected<br><br>" +
-        "<strong>Student Code:</strong><br>" +
-        decodedText,
-        "success"
-      );
+  const urlParams =
+    new URLSearchParams(window.location.search);
 
-      console.log("QR Code:", decodedText);
-
-    }
+  const lectureID =
+    urlParams.get("lectureID");
 
 
-    function onScanFailure(error) {
+  // ==========================================
+  // SHOW RESULT
+  // ==========================================
 
-      // Normal scanning failures are ignored.
-      // They happen continuously while the camera
-      // is looking for a QR code.
+  function showResult(message, className) {
 
-    }
+    document.getElementById("result").innerHTML =
+      "<p class='" + className + "'>" +
+      message +
+      "</p>";
 
-
-    function startScanner() {
-
-      const html5QrCode =
-        new Html5Qrcode("reader");
+  }
 
 
-      const config = {
+  // ==========================================
+  // CHECK LECTURE ID
+  // ==========================================
 
-        fps: 10,
+  if (!lectureID) {
 
-        qrbox: {
-          width: 280,
-          height: 280
-        },
+    showResult(
+      "⚠️ No Lecture ID was provided.",
+      "warning"
+    );
 
-        aspectRatio: 1.0
+  }
+
+
+  // ==========================================
+  // SEND ATTENDANCE TO APPS SCRIPT
+  // ==========================================
+
+  function sendAttendance(studentCode) {
+
+    showResult(
+      "Processing attendance...<br><br>" +
+      "Student Code: " +
+      studentCode,
+      "info"
+    );
+
+
+    const callbackName =
+      "attendanceCallback_" +
+      Date.now();
+
+
+    window[callbackName] =
+      function(response) {
+
+        if (response.success) {
+
+          showResult(
+
+            "✓ Attendance Recorded<br><br>" +
+
+            "<strong>" +
+            response.studentName +
+            "</strong><br><br>" +
+
+            "Student ID: " +
+            response.studentID,
+
+            "success"
+
+          );
+
+        }
+
+        else if (response.duplicate) {
+
+          showResult(
+
+            "⚠️ Student Already Recorded<br><br>" +
+
+            "<strong>" +
+            response.studentName +
+            "</strong><br><br>" +
+
+            response.message,
+
+            "warning"
+
+          );
+
+        }
+
+        else {
+
+          showResult(
+
+            "❌ Attendance Error<br><br>" +
+            response.message,
+
+            "error"
+
+          );
+
+        }
+
+
+        delete window[callbackName];
 
       };
 
 
-      html5QrCode.start(
+    const scriptURL =
 
-        {
-          facingMode: "environment"
-        },
+      APPS_SCRIPT_URL +
 
-        config,
+      "?action=recordAttendance" +
 
-        onScanSuccess,
+      "&lectureID=" +
+      encodeURIComponent(lectureID) +
 
-        onScanFailure
+      "&studentCode=" +
+      encodeURIComponent(studentCode) +
 
-      )
+      "&callback=" +
+      encodeURIComponent(callbackName);
 
-      .then(function() {
+
+    const script =
+      document.createElement("script");
+
+
+    script.src = scriptURL;
+
+
+    script.onerror =
+      function() {
 
         showResult(
-          "✓ Camera Ready<br><br>" +
-          "Place the Student QR Code inside the square.",
-          "success"
-        );
 
-      })
+          "❌ Unable to connect to attendance system.",
 
-      .catch(function(error) {
-
-        showResult(
-          "Camera Error:<br>" + error,
           "error"
+
         );
 
-      });
+        delete window[callbackName];
+
+      };
+
+
+    document.body.appendChild(script);
+
+  }
+
+
+  // ==========================================
+  // QR SCAN SUCCESS
+  // ==========================================
+
+  let processing = false;
+
+
+  function onScanSuccess(decodedText, decodedResult) {
+
+    if (processing) {
+      return;
+    }
+
+
+    processing = true;
+
+
+    // Stop repeated scans temporarily
+
+    if (window.html5QrCode) {
+
+      window.html5QrCode.pause(true);
 
     }
 
 
-    window.addEventListener(
-      "load",
-      startScanner
-    );
+    sendAttendance(decodedText.trim());
 
-  </script>
+
+    // Allow another scan after 4 seconds
+
+    setTimeout(function() {
+
+      processing = false;
+
+      if (window.html5QrCode) {
+
+        window.html5QrCode.resume();
+
+      }
+
+    }, 4000);
+
+  }
+
+
+  // ==========================================
+  // NORMAL SCANNING ERRORS
+  // ==========================================
+
+  function onScanFailure(error) {
+
+    // Ignore normal scanning failures.
+
+  }
+
+
+  // ==========================================
+  // START CAMERA
+  // ==========================================
+
+  function startScanner() {
+
+    if (!lectureID) {
+      return;
+    }
+
+
+    window.html5QrCode =
+      new Html5Qrcode("reader");
+
+
+    const config = {
+
+      fps: 10,
+
+      qrbox: {
+        width: 280,
+        height: 280
+      },
+
+      aspectRatio: 1.0
+
+    };
+
+
+    window.html5QrCode.start(
+
+      {
+        facingMode: "environment"
+      },
+
+      config,
+
+      onScanSuccess,
+
+      onScanFailure
+
+    )
+
+    .then(function() {
+
+      showResult(
+
+        "✓ Camera Ready<br><br>" +
+        "Lecture ID: " +
+        lectureID +
+        "<br><br>" +
+        "Point the camera at the student's QR code.",
+
+        "success"
+
+      );
+
+    })
+
+    .catch(function(error) {
+
+      showResult(
+
+        "❌ Camera Error:<br>" +
+        error,
+
+        "error"
+
+      );
+
+    });
+
+  }
+
+
+  window.addEventListener(
+    "load",
+    startScanner
+  );
+
+</script>
 
 </body>
 
