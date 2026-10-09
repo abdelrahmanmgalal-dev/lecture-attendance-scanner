@@ -77,7 +77,14 @@
     </p>
 
     <div id="reader"></div>
+<div
+  id="queueStatus"
+  class="info"
+  style="margin-top:10px;">
 
+  No pending attendance submissions.
+
+</div>
     <div id="result">
 
       <p class="info">
@@ -152,42 +159,138 @@ function escapeHtml(value) {
   // ==========================================
   // SEND ATTENDANCE TO APPS SCRIPT
   // ==========================================
+// ==========================================
+// BATCH ATTENDANCE PROCESSING
+// ==========================================
 
- function sendAttendance(studentCode) {
+const ATTENDANCE_BATCH_SIZE = 5;
+const BATCH_MAX_WAIT_MS = 4000;
+const ATTENDANCE_REQUEST_TIMEOUT_MS = 20000;
+
+let pendingStudentCodes = [];
+
+let queuedOrInFlightCodes = new Set();
+let completedStudentCodes = new Set();
+let retryAfterByCode = new Map();
+
+let batchProcessing = false;
+let batchIdleTimer = null;
+
+
+// ==========================================
+// QUEUE STATUS
+// ==========================================
+
+function updateQueueStatus() {
+
+  const element =
+    document.getElementById("queueStatus");
+
+  if (!element) {
+    return;
+  }
+
+  const count =
+    queuedOrInFlightCodes.size;
+
+  element.textContent =
+    count > 0
+      ? count +
+        " student(s) awaiting server confirmation."
+      : "No pending attendance submissions.";
+
+}
+
+
+// ==========================================
+// SCHEDULE A PARTIAL BATCH
+// ==========================================
+
+function scheduleBatchFlush() {
+
+  if (
+    pendingStudentCodes.length === 0 ||
+    batchIdleTimer !== null
+  ) {
+    return;
+  }
+
+  batchIdleTimer = setTimeout(function() {
+
+    batchIdleTimer = null;
+
+    sendAttendanceBatch();
+
+  }, BATCH_MAX_WAIT_MS);
+
+}
+
+
+// ==========================================
+// SEND A BATCH TO APPS SCRIPT
+// ==========================================
+
+function sendAttendanceBatch() {
+
+  if (
+    batchProcessing ||
+    pendingStudentCodes.length === 0
+  ) {
+    return;
+  }
+
+
+  if (batchIdleTimer !== null) {
+
+    clearTimeout(batchIdleTimer);
+
+    batchIdleTimer = null;
+
+  }
+
+
+  const batchCodes =
+    pendingStudentCodes.splice(
+      0,
+      ATTENDANCE_BATCH_SIZE
+    );
+
+
+  batchProcessing = true;
+
+
+  updateQueueStatus();
+
 
   showResult(
-    "Processing attendance...<br><br>" +
-    "Student Code: " +
-    escapeHtml(studentCode),
+    "Submitting attendance for " +
+    batchCodes.length +
+    " student(s)...<br><br>" +
+    "Please continue scanning the next students. " +
+    "The final confirmation will appear after the server responds.",
     "info"
   );
 
 
   const callbackName =
-    "attendanceCallback_" +
+    "attendanceBatchCallback_" +
     Date.now() +
     "_" +
     Math.floor(Math.random() * 1000000);
 
 
-  let completed = false;
-
-  let requestTimeout = null;
-
+  let finished = false;
+  let timeoutHandle = null;
   let script = null;
 
 
-  // ==========================================
-  // CLEAN UP REQUEST
-  // ==========================================
-
   function cleanupRequest() {
 
-    if (requestTimeout !== null) {
+    if (timeoutHandle !== null) {
 
-      clearTimeout(requestTimeout);
+      clearTimeout(timeoutHandle);
 
-      requestTimeout = null;
+      timeoutHandle = null;
 
     }
 
@@ -200,153 +303,217 @@ function escapeHtml(value) {
       script.parentNode
     ) {
 
-      script.parentNode.removeChild(
-        script
-      );
+      script.parentNode.removeChild(script);
 
     }
 
   }
 
 
-  // ==========================================
-  // FINISH REQUEST AND RESUME SCANNER
-  // ==========================================
-
-  function finishRequest(
+  function finishBatch(
     response,
     errorMessage
   ) {
 
-    // Prevent handling the same response twice.
-
-    if (completed) {
+    if (finished) {
       return;
     }
 
-
-    completed = true;
+    finished = true;
 
     cleanupRequest();
 
+    batchProcessing = false;
 
-    if (errorMessage) {
+
+    // ========================================
+    // REQUEST-LEVEL ERROR
+    // ========================================
+
+    if (
+      errorMessage ||
+      !response ||
+      !response.success ||
+      !Array.isArray(response.results)
+    ) {
+
+      batchCodes.forEach(function(code) {
+
+        queuedOrInFlightCodes.delete(code);
+
+        // Allow retry after a short cooldown.
+        // The server checks duplicates before saving.
+
+        retryAfterByCode.set(
+          code,
+          Date.now() + 8000
+        );
+
+      });
+
+
+      const message =
+        errorMessage ||
+        (
+          response && response.message
+            ? response.message
+            : "The batch could not be confirmed."
+        );
+
 
       showResult(
-        errorMessage,
+        "⚠️ Batch not confirmed.<br><br>" +
+        escapeHtml(message) +
+        "<br><br>" +
+        "Check the attendance report before retrying, " +
+        "because the server may have saved some records.",
         "error"
       );
 
-    }
 
-    else if (
-      !response
-    ) {
+      updateQueueStatus();
 
-      showResult(
-        "❌ No response was received from the attendance server.",
-        "error"
-      );
+      scheduleNextBatch();
 
-    }
-
-    else if (
-      response.success
-    ) {
-
-      showResult(
-
-        "✓ Attendance Recorded<br><br>" +
-
-        "<strong>" +
-        escapeHtml(
-          response.studentName
-        ) +
-        "</strong><br><br>" +
-
-        "Student ID: " +
-        escapeHtml(
-          response.studentID
-        ),
-
-        "success"
-
-      );
-
-    }
-
-    else if (
-      response.duplicate
-    ) {
-
-      showResult(
-
-        "⚠️ Student Already Recorded<br><br>" +
-
-        "<strong>" +
-        escapeHtml(
-          response.studentName
-        ) +
-        "</strong><br><br>" +
-
-        escapeHtml(
-          response.message
-        ),
-
-        "warning"
-
-      );
-
-    }
-
-    else {
-
-      showResult(
-
-        "❌ Attendance Error<br><br>" +
-
-        escapeHtml(
-          response.message ||
-          "Attendance could not be recorded."
-        ),
-
-        "error"
-
-      );
+      return;
 
     }
 
 
-    // Small cooldown after receiving the response.
-    // Do not wait a fixed 4 seconds for every scan.
+    // ========================================
+    // PROCESS INDIVIDUAL RESULTS
+    // ========================================
 
-    setTimeout(function() {
+    let recordedCount = 0;
+    let duplicateCount = 0;
+    let errorCount = 0;
 
-      processing = false;
+    const details = [];
 
 
-      if (
-        window.html5QrCode
-      ) {
+    batchCodes.forEach(function(code, index) {
 
-        try {
+      const item =
+        response.results[index];
 
-          window.html5QrCode.resume();
 
-        }
+      queuedOrInFlightCodes.delete(code);
 
-        catch (error) {
 
-          console.warn(
-            "Scanner resume:",
-            error
-          );
+      if (!item) {
 
-        }
+        errorCount++;
+
+        retryAfterByCode.set(
+          code,
+          Date.now() + 8000
+        );
+
+        details.push(
+          "⚠️ " +
+          escapeHtml(code) +
+          ": No individual result received."
+        );
+
+        return;
 
       }
 
-    }, 900);
+
+      // Prevent this QR from being resubmitted
+      // repeatedly during the same scanner session.
+
+      completedStudentCodes.add(code);
+
+
+      const studentName =
+        item.studentName || code;
+
+
+      if (item.success) {
+
+        recordedCount++;
+
+        details.push(
+          "✓ <strong>" +
+          escapeHtml(studentName) +
+          "</strong> — Attendance Recorded"
+        );
+
+      }
+
+      else if (item.duplicate) {
+
+        duplicateCount++;
+
+        details.push(
+          "⚠️ <strong>" +
+          escapeHtml(studentName) +
+          "</strong> — Already Recorded"
+        );
+
+      }
+
+      else {
+
+        errorCount++;
+
+        details.push(
+          "❌ <strong>" +
+          escapeHtml(studentName) +
+          "</strong> — " +
+          escapeHtml(
+            item.message ||
+            "Attendance error."
+          )
+        );
+
+      }
+
+    });
+
+
+    let resultClass = "success";
+
+    if (errorCount > 0) {
+
+      resultClass =
+        recordedCount > 0
+          ? "warning"
+          : "error";
+
+    } else if (duplicateCount > 0) {
+
+      resultClass = "warning";
+
+    }
+
+
+    showResult(
+
+      "<strong>Batch confirmation received</strong><br><br>" +
+
+      "Recorded: " +
+      recordedCount +
+
+      " &nbsp; | &nbsp; Already recorded: " +
+      duplicateCount +
+
+      " &nbsp; | &nbsp; Errors: " +
+      errorCount +
+
+      "<br><br>" +
+
+      details.join("<br>"),
+
+      resultClass
+
+    );
+
+
+    updateQueueStatus();
+
+    scheduleNextBatch();
 
   }
 
@@ -358,7 +525,7 @@ function escapeHtml(value) {
   window[callbackName] =
     function(response) {
 
-      finishRequest(
+      finishBatch(
         response,
         null
       );
@@ -370,84 +537,92 @@ function escapeHtml(value) {
 
     APPS_SCRIPT_URL +
 
-    "?action=recordAttendance" +
+    "?action=recordAttendanceBatch" +
 
     "&lectureID=" +
-    encodeURIComponent(
-      lectureID
-    ) +
+    encodeURIComponent(lectureID) +
 
-    "&studentCode=" +
+    "&studentCodes=" +
     encodeURIComponent(
-      studentCode
+      JSON.stringify(batchCodes)
     ) +
 
     "&callback=" +
-    encodeURIComponent(
-      callbackName
-    );
+    encodeURIComponent(callbackName);
 
 
   script =
     document.createElement("script");
 
 
-  script.src =
-    scriptURL;
+  script.src = scriptURL;
 
 
   script.onerror =
     function() {
 
-      finishRequest(
-
+      finishBatch(
         null,
-
-        "❌ Unable to connect to the attendance system. Check the connection before scanning again."
-
+        "Unable to connect to the attendance server."
       );
 
     };
 
 
-  // Safety timeout in case the server never responds.
-
-  requestTimeout =
+  timeoutHandle =
     setTimeout(function() {
 
-      finishRequest(
-
+      finishBatch(
         null,
-
-        "⚠️ The attendance server did not respond in time. The record may still have been saved. Check the attendance report before retrying this student."
-
+        "The attendance server did not respond within 20 seconds."
       );
 
-    }, 20000);
+    }, ATTENDANCE_REQUEST_TIMEOUT_MS);
 
 
-  document.body.appendChild(
-    script
-  );
+  document.body.appendChild(script);
 
 }
+
+
+// ==========================================
+// SEND THE NEXT BATCH WHEN POSSIBLE
+// ==========================================
+
+function scheduleNextBatch() {
+
+  if (
+    batchProcessing ||
+    pendingStudentCodes.length === 0
+  ) {
+    return;
+  }
+
+
+  if (
+    pendingStudentCodes.length >=
+    ATTENDANCE_BATCH_SIZE
+  ) {
+
+    sendAttendanceBatch();
+
+  } else {
+
+    scheduleBatchFlush();
+
+  }
+
+}
+
 
 // ==========================================
 // QR SCAN SUCCESS
 // ==========================================
 
-let processing = false;
-
-
 function onScanSuccess(
   decodedText,
   decodedResult
 ) {
-
-  if (processing) {
-    return;
-  }
-
 
   if (!lectureID) {
 
@@ -462,9 +637,7 @@ function onScanSuccess(
 
 
   const studentCode =
-    String(
-      decodedText || ""
-    ).trim();
+    String(decodedText || "").trim();
 
 
   if (!studentCode) {
@@ -472,34 +645,64 @@ function onScanSuccess(
   }
 
 
-  // Block new scans until the current request finishes.
+  // Ignore a QR already confirmed or
+  // currently waiting for a server response.
 
-  processing = true;
-
-
-  try {
-
-    if (window.html5QrCode) {
-
-      window.html5QrCode.pause(true);
-
-    }
-
-  }
-
-  catch (error) {
-
-    console.warn(
-      "Unable to pause scanner:",
-      error
-    );
-
+  if (
+    completedStudentCodes.has(studentCode) ||
+    queuedOrInFlightCodes.has(studentCode)
+  ) {
+    return;
   }
 
 
-  sendAttendance(
-    studentCode
+  // Avoid immediately retrying a failed request.
+
+  const retryUntil =
+    retryAfterByCode.get(studentCode) || 0;
+
+
+  if (Date.now() < retryUntil) {
+    return;
+  }
+
+
+  retryAfterByCode.delete(studentCode);
+
+
+  // Queue this unique QR.
+
+  pendingStudentCodes.push(studentCode);
+
+  queuedOrInFlightCodes.add(studentCode);
+
+
+  updateQueueStatus();
+
+
+  showResult(
+    "QR captured and queued.<br><br>" +
+    "Attendance is not confirmed yet. " +
+    "Wait for the server confirmation.",
+    "info"
   );
+
+
+  // Send immediately when five unique codes
+  // have been collected.
+
+  if (
+    pendingStudentCodes.length >=
+    ATTENDANCE_BATCH_SIZE
+  ) {
+
+    sendAttendanceBatch();
+
+  } else {
+
+    scheduleBatchFlush();
+
+  }
 
 }
   // ==========================================
