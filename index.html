@@ -137,147 +137,347 @@
 
   }
 
+function escapeHtml(value) {
 
+  return String(
+    value == null ? "" : value
+  )
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+
+}
   // ==========================================
   // SEND ATTENDANCE TO APPS SCRIPT
   // ==========================================
 
-  function sendAttendance(studentCode) {
+ function sendAttendance(studentCode) {
 
-    showResult(
-      "Processing attendance...<br><br>" +
-      "Student Code: " +
-      studentCode,
-      "info"
-    );
-
-
-    const callbackName =
-      "attendanceCallback_" +
-      Date.now();
+  showResult(
+    "Processing attendance...<br><br>" +
+    "Student Code: " +
+    escapeHtml(studentCode),
+    "info"
+  );
 
 
-    window[callbackName] =
-      function(response) {
-
-        if (response.success) {
-
-          showResult(
-
-            "✓ Attendance Recorded<br><br>" +
-
-            "<strong>" +
-            response.studentName +
-            "</strong><br><br>" +
-
-            "Student ID: " +
-            response.studentID,
-
-            "success"
-
-          );
-
-        }
-
-        else if (response.duplicate) {
-
-          showResult(
-
-            "⚠️ Student Already Recorded<br><br>" +
-
-            "<strong>" +
-            response.studentName +
-            "</strong><br><br>" +
-
-            response.message,
-
-            "warning"
-
-          );
-
-        }
-
-        else {
-
-          showResult(
-
-            "❌ Attendance Error<br><br>" +
-            response.message,
-
-            "error"
-
-          );
-
-        }
+  const callbackName =
+    "attendanceCallback_" +
+    Date.now() +
+    "_" +
+    Math.floor(Math.random() * 1000000);
 
 
-        delete window[callbackName];
+  let completed = false;
 
-      };
+  let requestTimeout = null;
 
-
-    const scriptURL =
-
-      APPS_SCRIPT_URL +
-
-      "?action=recordAttendance" +
-
-      "&lectureID=" +
-      encodeURIComponent(lectureID) +
-
-      "&studentCode=" +
-      encodeURIComponent(studentCode) +
-
-      "&callback=" +
-      encodeURIComponent(callbackName);
+  let script = null;
 
 
-    const script =
-      document.createElement("script");
+  // ==========================================
+  // CLEAN UP REQUEST
+  // ==========================================
+
+  function cleanupRequest() {
+
+    if (requestTimeout !== null) {
+
+      clearTimeout(requestTimeout);
+
+      requestTimeout = null;
+
+    }
 
 
-    script.src = scriptURL;
+    delete window[callbackName];
 
 
-    script.onerror =
-      function() {
+    if (
+      script &&
+      script.parentNode
+    ) {
 
-        showResult(
+      script.parentNode.removeChild(
+        script
+      );
 
-          "❌ Unable to connect to attendance system.",
-
-          "error"
-
-        );
-
-        delete window[callbackName];
-
-      };
-
-
-    document.body.appendChild(script);
+    }
 
   }
 
 
   // ==========================================
-  // QR SCAN SUCCESS
+  // FINISH REQUEST AND RESUME SCANNER
   // ==========================================
 
-  let processing = false;
+  function finishRequest(
+    response,
+    errorMessage
+  ) {
 
+    // Prevent handling the same response twice.
 
-  function onScanSuccess(decodedText, decodedResult) {
-
-    if (processing) {
+    if (completed) {
       return;
     }
 
 
-    processing = true;
+    completed = true;
+
+    cleanupRequest();
 
 
-    // Stop repeated scans temporarily
+    if (errorMessage) {
+
+      showResult(
+        errorMessage,
+        "error"
+      );
+
+    }
+
+    else if (
+      !response
+    ) {
+
+      showResult(
+        "❌ No response was received from the attendance server.",
+        "error"
+      );
+
+    }
+
+    else if (
+      response.success
+    ) {
+
+      showResult(
+
+        "✓ Attendance Recorded<br><br>" +
+
+        "<strong>" +
+        escapeHtml(
+          response.studentName
+        ) +
+        "</strong><br><br>" +
+
+        "Student ID: " +
+        escapeHtml(
+          response.studentID
+        ),
+
+        "success"
+
+      );
+
+    }
+
+    else if (
+      response.duplicate
+    ) {
+
+      showResult(
+
+        "⚠️ Student Already Recorded<br><br>" +
+
+        "<strong>" +
+        escapeHtml(
+          response.studentName
+        ) +
+        "</strong><br><br>" +
+
+        escapeHtml(
+          response.message
+        ),
+
+        "warning"
+
+      );
+
+    }
+
+    else {
+
+      showResult(
+
+        "❌ Attendance Error<br><br>" +
+
+        escapeHtml(
+          response.message ||
+          "Attendance could not be recorded."
+        ),
+
+        "error"
+
+      );
+
+    }
+
+
+    // Small cooldown after receiving the response.
+    // Do not wait a fixed 4 seconds for every scan.
+
+    setTimeout(function() {
+
+      processing = false;
+
+
+      if (
+        window.html5QrCode
+      ) {
+
+        try {
+
+          window.html5QrCode.resume();
+
+        }
+
+        catch (error) {
+
+          console.warn(
+            "Scanner resume:",
+            error
+          );
+
+        }
+
+      }
+
+    }, 900);
+
+  }
+
+
+  // ==========================================
+  // JSONP CALLBACK
+  // ==========================================
+
+  window[callbackName] =
+    function(response) {
+
+      finishRequest(
+        response,
+        null
+      );
+
+    };
+
+
+  const scriptURL =
+
+    APPS_SCRIPT_URL +
+
+    "?action=recordAttendance" +
+
+    "&lectureID=" +
+    encodeURIComponent(
+      lectureID
+    ) +
+
+    "&studentCode=" +
+    encodeURIComponent(
+      studentCode
+    ) +
+
+    "&callback=" +
+    encodeURIComponent(
+      callbackName
+    );
+
+
+  script =
+    document.createElement("script");
+
+
+  script.src =
+    scriptURL;
+
+
+  script.onerror =
+    function() {
+
+      finishRequest(
+
+        null,
+
+        "❌ Unable to connect to the attendance system. Check the connection before scanning again."
+
+      );
+
+    };
+
+
+  // Safety timeout in case the server never responds.
+
+  requestTimeout =
+    setTimeout(function() {
+
+      finishRequest(
+
+        null,
+
+        "⚠️ The attendance server did not respond in time. The record may still have been saved. Check the attendance report before retrying this student."
+
+      );
+
+    }, 20000);
+
+
+  document.body.appendChild(
+    script
+  );
+
+}
+
+// ==========================================
+// QR SCAN SUCCESS
+// ==========================================
+
+let processing = false;
+
+
+function onScanSuccess(
+  decodedText,
+  decodedResult
+) {
+
+  if (processing) {
+    return;
+  }
+
+
+  if (!lectureID) {
+
+    showResult(
+      "⚠️ No Lecture ID was provided.",
+      "warning"
+    );
+
+    return;
+
+  }
+
+
+  const studentCode =
+    String(
+      decodedText || ""
+    ).trim();
+
+
+  if (!studentCode) {
+    return;
+  }
+
+
+  // Block new scans until the current request finishes.
+
+  processing = true;
+
+
+  try {
 
     if (window.html5QrCode) {
 
@@ -285,27 +485,23 @@
 
     }
 
+  }
 
-    sendAttendance(decodedText.trim());
+  catch (error) {
 
-
-    // Allow another scan after 4 seconds
-
-    setTimeout(function() {
-
-      processing = false;
-
-      if (window.html5QrCode) {
-
-        window.html5QrCode.resume();
-
-      }
-
-    }, 4000);
+    console.warn(
+      "Unable to pause scanner:",
+      error
+    );
 
   }
 
 
+  sendAttendance(
+    studentCode
+  );
+
+}
   // ==========================================
   // NORMAL SCANNING ERRORS
   // ==========================================
