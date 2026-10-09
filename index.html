@@ -163,8 +163,8 @@ function escapeHtml(value) {
 // BATCH ATTENDANCE PROCESSING
 // ==========================================
 
-const ATTENDANCE_BATCH_SIZE = 5;
-const BATCH_MAX_WAIT_MS = 4000;
+const ATTENDANCE_BATCH_SIZE = 10;
+const BATCH_MAX_WAIT_MS = 1500;
 const ATTENDANCE_REQUEST_TIMEOUT_MS = 20000;
 
 let pendingStudentCodes = [];
@@ -257,7 +257,7 @@ function sendAttendanceBatch() {
 
 
   batchProcessing = true;
-
+const batchStartedAt = performance.now();
 
   updateQueueStatus();
 
@@ -319,12 +319,19 @@ function sendAttendanceBatch() {
       return;
     }
 
-    finished = true;
+  finished = true;
 
-    cleanupRequest();
+console.log("Attendance batch timing:", {
+  batchSize: batchCodes.length,
+  elapsedMs: Math.round(
+    performance.now() - batchStartedAt
+  ),
+  transportError: !!errorMessage
+});
 
-    batchProcessing = false;
+cleanupRequest();
 
+batchProcessing = false;
 
     // ========================================
     // REQUEST-LEVEL ERROR
@@ -727,13 +734,19 @@ function onScanSuccess(
     }
 
 
-    window.html5QrCode =
-      new Html5Qrcode("reader");
-
+   window.html5QrCode =
+  new Html5Qrcode(
+    "reader",
+    {
+      formatsToSupport: [
+        Html5QrcodeSupportedFormats.QR_CODE
+      ]
+    }
+  );
 
     const config = {
 
-      fps: 10,
+    fps: 12,
 
       qrbox: {
         width: 280,
