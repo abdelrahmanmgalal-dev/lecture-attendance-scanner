@@ -343,6 +343,18 @@ batchProcessing = false;
       !response.success ||
       !Array.isArray(response.results)
     ) {
+      console.error(
+  "Attendance batch request failed:",
+  {
+    errorMessage: errorMessage,
+    batchSize: batchCodes.length,
+    batchCodes: batchCodes,
+    requestURL: script ? script.src : "",
+    elapsedMs: Math.round(
+      performance.now() - batchStartedAt
+    )
+  }
+);
 
       batchCodes.forEach(function(code) {
 
