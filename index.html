@@ -590,17 +590,12 @@ batchProcessing = false;
 
       // Prevent this QR from being resubmitted
       // repeatedly during the same scanner session.
-      batchRetryCountByCode.delete(code);
-
-      completedStudentCodes.add(code);
-
-
-      const studentName =
-        item.studentName || code;
-
+     const studentName =
+  item.studentName || code;
 
       if (item.success) {
-
+completedStudentCodes.add(code);
+batchRetryCountByCode.delete(code);
         recordedCount++;
 
         details.push(
@@ -612,7 +607,8 @@ batchProcessing = false;
       }
 
       else if (item.duplicate) {
-
+completedStudentCodes.add(code);
+batchRetryCountByCode.delete(code);
         duplicateCount++;
 
         details.push(
@@ -624,7 +620,19 @@ batchProcessing = false;
       }
 
       else {
+retryAfterByCode.set(
+  code,
+  Date.now() + 8000
+);
 
+console.error(
+  "Student attendance rejected by server:",
+  {
+    studentCode: code,
+    lectureID: lectureID,
+    result: item
+  }
+);
         errorCount++;
 
         details.push(
